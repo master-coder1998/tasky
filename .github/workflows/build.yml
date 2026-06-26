@@ -1,0 +1,45 @@
+name: Build, Scan, and Push to ECR
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  id-token: write      # needed for OIDC (no stored AWS keys)
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: tasky
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::836238512965:role/github-actions-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: docker build --provenance=false -t $ECR_REPO:latest .
+
+      - name: Scan image with Trivy (report HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REPO }}:latest
+          severity: HIGH,CRITICAL
+          exit-code: '0'   # change to '1' to BLOCK the push on findings (demo both)
+
+      - name: Tag & push to ECR
+        run: |
+          ECR_URI=${{ steps.ecr.outputs.registry }}/$ECR_REPO
+          docker tag $ECR_REPO:latest $ECR_URI:latest
+          docker push $ECR_URI:latest
